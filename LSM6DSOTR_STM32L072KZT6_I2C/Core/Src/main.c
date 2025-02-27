@@ -73,7 +73,7 @@ static const uint8_t LSM6DSO_REG_OUTZ_L_XL = 0x2C;  // Z-axis acceleration data 
 static const uint8_t LSM6DSO_REG_OUTZ_H_XL = 0x2D;  // Z-axis acceleration data high byte
 
 volatile int woke_up = 0; // Flag to track wake-up
-volatile int sleep_flag = 1; // Start with Sleep mode enabled
+volatile int sleep_flag = 0; // Start with Sleep mode enabled
 
 
 
@@ -154,6 +154,10 @@ int main(void)
   MX_SPI1_Init();
   MX_USART1_UART_Init();
   /* USER CODE BEGIN 2 */
+
+
+
+
   //static const uint8_t TOS_REG = 0x03;
   //static const uint8_t ctrl1_xl_value = 0x40;
   //static const uint8_t TOS_DATA_LSB = 0x00;
@@ -177,23 +181,96 @@ int main(void)
   // Tell TMP102 that we want to read from the temperature register
 
 
-  	const uint8_t LSM6DSO_REG_CTRL1_XL = 0x10;  // Control register for accelerometer
-  	const uint8_t CTRL1_XL_data = 0x40; // turn on accelometer w specific settings at 104Hz sampling - datasheet 9.12 CTRL1_XL (10h)
-    buf[0] = LSM6DSO_REG_CTRL1_XL;
-    buf[1] = CTRL1_XL_data;
-    ret = HAL_I2C_Master_Transmit(&hi2c1, LSM6DSO_ADDR, buf, 2, TIMEOUT);
-    if ( ret != HAL_OK ) {
-      strcpy((char*)buf, "Error init\r\n");
-    } else {
-    	strcpy((char*)buf, "Done init\r\n");
+
+
+
+    // For 500 mg (~0.5g), set WAKE_UP_THS = 16 (0x10), since 500 / 31.25 ≈ 16.
+    // Threshold for wake-up: 1 LSB weight depends on WAKE_THS_W in WAKE_UP_DUR (5Ch);
+    // WAKE_UP_DUR (5Ch) default value: 000000 = (0: 1 LSB = FS_XL / (26); = 64; 1 LSB weight 64;
+    // FS_XL = +-2000mg -> 4000/64 = 31.25 mg;
+    // for 1000mg treshhold: 1000mg / 31.25 = 32;
+
+
+
+
+
+    void LSM6DSOTR_Init(void) {
+        uint8_t data[2];
+
+        // Full reset
+        data[0] = 0x12; data[1] = 0x01; // CTRL3_C: SW_RESET
+        ret = HAL_I2C_Master_Transmit(&hi2c1, LSM6DSO_ADDR, data, 2, 100);
+        if (ret != HAL_OK) printf("Reset failed\n");
+        HAL_Delay(100);
+
+        // Enable accelerometer, high-performance
+        data[0] = 0x10; data[1] = 0x40; // CTRL1_XL: 104 Hz, ±2g
+        HAL_I2C_Master_Transmit(&hi2c1, LSM6DSO_ADDR, data, 2, 100);
+        HAL_Delay(50);
+
+
+
+
+        // registers for INT trigger wake up
+
+        data[0] = 0x15; data[1] = 0x00; // CTRL6_C: XL_HM_MODE = 0
+        HAL_I2C_Master_Transmit(&hi2c1, LSM6DSO_ADDR, data, 2, 100);
+        HAL_Delay(50);
+
+        // Enable high-pass filter
+        data[0] = 0x17; data[1] = 0x00; // CTRL8_XL: HP_EN = 1
+        HAL_I2C_Master_Transmit(&hi2c1, LSM6DSO_ADDR, data, 2, 100);
+        HAL_Delay(50);
+
+        // Set wake-up threshold to 31.25 mg
+        data[0] = 0x5B; data[1] = 0x08;
+        HAL_I2C_Master_Transmit(&hi2c1, LSM6DSO_ADDR, data, 2, 100);
+        HAL_Delay(50);
+
+        // Immediate wake-up
+        data[0] = 0x5C; data[1] = 0x00; // WAKE_UP_DUR
+        HAL_I2C_Master_Transmit(&hi2c1, LSM6DSO_ADDR, data, 2, 100);
+        HAL_Delay(50);
+
+        // Enable slope filter and interrupts
+        data[0] = 0x56; data[1] = 0x00; // TAP_CFG0: SLOPE_FDS = 1
+        HAL_I2C_Master_Transmit(&hi2c1, LSM6DSO_ADDR, data, 2, 100);
+        HAL_Delay(50);
+
+        // Route wake-up to INT1
+        data[0] = 0x5E; data[1] = 0x20; // MD1_CFG: INT1_WU = 1
+        HAL_I2C_Master_Transmit(&hi2c1, LSM6DSO_ADDR, data, 2, 100);
+        HAL_Delay(50);
+
+        // INT1 push-pull, active-high
+        data[0] = 0x12; data[1] = 0x44; // CTRL3_C
+        HAL_I2C_Master_Transmit(&hi2c1, LSM6DSO_ADDR, data, 2, 100);
+        HAL_Delay(50);
+
+
+/*
+        // Verify all registers
+        uint8_t vald;
+        HAL_I2C_Mem_Read(&hi2c1, LSM6DSO_ADDR, 0x0F, 1, &vald, 1, 100); printf("WHO_AM_I: 0x%02X\n", vald); // 0x6C
+        HAL_I2C_Mem_Read(&hi2c1, LSM6DSO_ADDR, 0x10, 1, &vald, 1, 100); printf("CTRL1_XL: 0x%02X\n", vald);  // 0x040
+        HAL_I2C_Mem_Read(&hi2c1, LSM6DSO_ADDR, 0x15, 1, &vald, 1, 100); printf("CTRL6_C: 0x%02X\n", vald); // 0x00
+        HAL_I2C_Mem_Read(&hi2c1, LSM6DSO_ADDR, 0x17, 1, &vald, 1, 100); printf("CTRL8_XL: 0x%02X\n", vald); // 0x10
+        HAL_I2C_Mem_Read(&hi2c1, LSM6DSO_ADDR, 0x56, 1, &vald, 1, 100); printf("TAP_CFG0: 0x%02X\n", vald); // 0x10
+        HAL_I2C_Mem_Read(&hi2c1, LSM6DSO_ADDR, 0x5B, 1, &vald, 1, 100); printf("WAKE_UP_THS: 0x%02X\n", vald); // 0x01
+        HAL_I2C_Mem_Read(&hi2c1, LSM6DSO_ADDR, 0x5E, 1, &vald, 1, 100); printf("MD1_CFG: 0x%02X\n", vald); // 0x20
+        HAL_I2C_Mem_Read(&hi2c1, LSM6DSO_ADDR, 0x12, 1, &vald, 1, 100); printf("CTRL3_C: 0x%02X\n", vald); // 0x40
+*/
     }
+
+
+    LSM6DSOTR_Init();
+
+
+
+
     // Send out buffer (temperature or error message)
-    HAL_UART_Transmit(&huart1, buf, strlen((char*)buf), TIMEOUT);
-    HAL_Delay(1000);
-
-
-
-
+    //HAL_UART_Transmit(&huart1, buf, strlen((char*)buf), TIMEOUT);
+    //HAL_Delay(1000);
 
 
 
@@ -269,6 +346,11 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
+	  // without any low power improvements 28 ma consumption;
+
+
+
+
 
 	  // The MCU knows PA0 is the wake-up trigger because:
 	  // MX_GPIO_Init configures PA0 as an EXTI input on Line 0.
@@ -320,19 +402,35 @@ int main(void)
 
 
 	    // This runs AFTER the callback
-	    if (woke_up)
-	       {
-	         char msg[] = "Woke up via PA0!\r\n";
-	         HAL_UART_Transmit(&huart1, (uint8_t*)msg, strlen(msg), 100);
-	         woke_up = 0; // Reset flag
-	       }
+//	    if (woke_up)
+//	       {
+//	         char msg[] = "Woke up via PA0!\r\n";
+//	         HAL_UART_Transmit(&huart1, (uint8_t*)msg, strlen(msg), 100);
+//	         woke_up = 0; // Reset flag
+//	       }
 
 
 
 
+	  uint8_t wake_up_src, accel_data[6];
+	  // Read all axes
+	  HAL_I2C_Mem_Read(&hi2c1, LSM6DSO_ADDR, 0x28, 1, accel_data, 6, 100); // OUTX_L_XL to OUTZ_H_XL
+	  int16_t accel_x = (int16_t)(accel_data[1] << 8 | accel_data[0]);
+	  int16_t accel_y = (int16_t)(accel_data[3] << 8 | accel_data[2]);
+	  int16_t accel_z = (int16_t)(accel_data[5] << 8 | accel_data[4]);
+	  HAL_I2C_Mem_Read(&hi2c1, LSM6DSO_ADDR, 0x1B, 1, &wake_up_src, 1, 100);
+	  uint8_t int1_state = HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_8);
+
+	  printf("WAKE_UP_SRC: 0x%02X, X: %d, Y: %d, Z: %d, INT1: %d\n", wake_up_src, accel_x, accel_y, accel_z, int1_state);
+	    if (wake_up_src & 0x08) {
+	       val = 0xFF;
+	          }
+	  HAL_Delay(100);
 
 
 
+
+/*
 	  // i2c TMP102 sensor code
 	  // Tell TMP102 that we want to read from the temperature register
 	    //buf[0] = LSM6DSO_REG_OUTX_L_XL; //x axis
@@ -365,7 +463,7 @@ int main(void)
 	    }
 	    // Send out buffer (temperature or error message)
 	    //HAL_UART_Transmit(&huart1, buf, strlen((char*)buf), TIMEOUT);
-
+*/
 
 	    brightness = 10;
 
@@ -392,13 +490,14 @@ int main(void)
 	    }
 
 
-	    HAL_Delay(1000);
+	    HAL_Delay(100);
+
 
 	    //if (sleep_flag)
 	    //{
 	    //enter_sleep(); // Go back to sleep after work is done
 	    //}
-	    sleep_flag = 1; // go back to sleep in next loop start
+	    //sleep_flag = 1; // go back to sleep in next loop start
 
     /* USER CODE END WHILE */
 
@@ -595,12 +694,6 @@ static void MX_GPIO_Init(void)
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(GPIOA, GPIO_PIN_4|GPIO_PIN_11, GPIO_PIN_SET);
 
-  /*Configure GPIO pin : PA0 */
-  GPIO_InitStruct.Pin = GPIO_PIN_0;
-  GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
-
   /*Configure GPIO pins : PA4 PA11 */
   GPIO_InitStruct.Pin = GPIO_PIN_4|GPIO_PIN_11;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
@@ -608,9 +701,15 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
+  /*Configure GPIO pin : PA8 */
+  GPIO_InitStruct.Pin = GPIO_PIN_8;
+  GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING;
+  GPIO_InitStruct.Pull = GPIO_PULLDOWN;
+  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+
   /* EXTI interrupt init*/
-  HAL_NVIC_SetPriority(EXTI0_1_IRQn, 0, 0);
-  HAL_NVIC_EnableIRQ(EXTI0_1_IRQn);
+  HAL_NVIC_SetPriority(EXTI4_15_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(EXTI4_15_IRQn);
 
 /* USER CODE BEGIN MX_GPIO_Init_2 */
 /* USER CODE END MX_GPIO_Init_2 */
@@ -630,11 +729,12 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
 	// Each pin (PA0, PB1, PC2) is tied to a unique EXTI line (EXTI0, EXTI1, EXTI2);
 
 
-	if (GPIO_Pin == GPIO_PIN_0) // PA0 (EXTI0) // Check if PA0 triggered the interrupt
+	if (GPIO_Pin == GPIO_PIN_8) // PA0 (EXTI0) // Check if PA0 triggered the interrupt
 	  {
 		// Do something when PA0 wakes the MCU
 
 		// This runs FIRST on wake-up
+		sleep_flag = 0;
 		woke_up = 1; // Set flag for main loop; this make sure that the wake up was from GPIO_PIN_0 not some other pin;
 		// if its other pin trigger then you can put else statement to go back to sleep;
 		// Optional: Add immediate actions here (e.g., toggle LED)
@@ -644,16 +744,16 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
 		// e.g., toggle an LED or set a flag
 
 	  }
-	else // Any other trigger pin that woke mcu up (e.g., PB1, PC2, etc.)
-	{
+//	else // Any other trigger pin that woke mcu up (e.g., PB1, PC2, etc.)
+//	{
 	// Go back to Sleep mode immediately
-	HAL_SuspendTick(); // Suspend SysTick to avoid unwanted wake-ups
-	HAL_PWR_EnterSLEEPMode(PWR_MAINREGULATOR_ON, PWR_SLEEPENTRY_WFI);
+//	HAL_SuspendTick(); // Suspend SysTick to avoid unwanted wake-ups
+//	HAL_PWR_EnterSLEEPMode(PWR_MAINREGULATOR_ON, PWR_SLEEPENTRY_WFI);
 
 	// The HAL_ResumeTick() after the Sleep call only runs if another interrupt wakes it again.
-	HAL_ResumeTick(); // This runs after waking up again
+//	HAL_ResumeTick(); // This runs after waking up again
 
-	}
+//	}
 
 
 	//switch(GPIO_Pin)
