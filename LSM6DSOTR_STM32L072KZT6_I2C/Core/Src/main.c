@@ -130,6 +130,7 @@ int main(void)
 	HAL_StatusTypeDef ret;
 	uint8_t buf[16];
 	int16_t val;
+	uint8_t data_sleep[2];
   /* USER CODE END 1 */
 
   /* MCU Configuration--------------------------------------------------------*/
@@ -381,13 +382,29 @@ int main(void)
 	  //Use a flag to decide when to sleep, so the MCU only enters Sleep mode when you explicitly want it to. For example:
 	  if (sleep_flag)
 	      {
+		   HAL_GPIO_WritePin(GPIOA, GPIO_PIN_4, GPIO_PIN_RESET); // off
+
+	        // Enable accelerometer, low_performance
+	        //data_sleep[0] = 0x10; data_sleep[1] = 0x10; // CTRL1_XL: 12 Hz, ±2g
+	        //HAL_I2C_Master_Transmit(&hi2c1, LSM6DSO_ADDR, data_sleep, 2, 100);
+	        //HAL_Delay(50);
+
 	       HAL_SuspendTick();
-	       HAL_PWR_EnterSLEEPMode(PWR_MAINREGULATOR_ON, PWR_SLEEPENTRY_WFI);
+
+	       //HAL_PWR_EnterSLEEPMode(PWR_MAINREGULATOR_ON, PWR_SLEEPENTRY_WFI);
+	       HAL_PWR_EnterSTOPMode(PWR_LOWPOWERREGULATOR_ON, PWR_STOPENTRY_WFI);
+
+
 	   	   //After waking up, resume SysTick, continues where it left off, after wake up and trigger EXTU_callback executes;
 	       HAL_ResumeTick();
+
+	       // Enable accelerometer, high-performance
+	       //data_sleep[0] = 0x10; data_sleep[1] = 0x40; // CTRL1_XL: 104 Hz, ±2g
+	       //HAL_I2C_Master_Transmit(&hi2c1, LSM6DSO_ADDR, data_sleep, 2, 100);
+	       //HAL_Delay(10);
 	      }
 
-
+	  	HAL_GPIO_WritePin(GPIOA, GPIO_PIN_4, GPIO_PIN_SET); // on
 
 	    // Suspend SysTick to prevent it from waking the CPU every 1 ms
 	    //HAL_SuspendTick();
