@@ -73,7 +73,7 @@ static const uint8_t LSM6DSO_REG_OUTZ_L_XL = 0x2C;  // Z-axis acceleration data 
 static const uint8_t LSM6DSO_REG_OUTZ_H_XL = 0x2D;  // Z-axis acceleration data high byte
 
 volatile int woke_up = 0; // Flag to track wake-up
-volatile int sleep_flag = 0; // Start with Sleep mode enabled
+volatile int sleep_flag = 1; // Start with Sleep mode enabled
 
 
 
@@ -198,19 +198,39 @@ int main(void)
         uint8_t data[2];
 
         // Full reset
-        data[0] = 0x12; data[1] = 0x01; // CTRL3_C: SW_RESET
-        ret = HAL_I2C_Master_Transmit(&hi2c1, LSM6DSO_ADDR, data, 2, 100);
-        if (ret != HAL_OK) printf("Reset failed\n");
-        HAL_Delay(100);
+        //data[0] = 0x12; data[1] = 0x01; // CTRL3_C: SW_RESET
+        //ret = HAL_I2C_Master_Transmit(&hi2c1, LSM6DSO_ADDR, data, 2, 100);
+        //if (ret != HAL_OK) printf("Reset failed\n");
+        //HAL_Delay(200);
 
         // Enable accelerometer, high-performance
         data[0] = 0x10; data[1] = 0x40; // CTRL1_XL: 104 Hz, ±2g
         HAL_I2C_Master_Transmit(&hi2c1, LSM6DSO_ADDR, data, 2, 100);
         HAL_Delay(50);
 
+        // Route wake-up to INT1
+        data[0] = 0x5E; data[1] = 0x20; // MD1_CFG: INT1_WU = 1
+        HAL_I2C_Master_Transmit(&hi2c1, LSM6DSO_ADDR, data, 2, 100);
+        HAL_Delay(50);
+
+        // TAP_CFG2, INTERRUPTS_ENABLE
+        data[0] = 0x58; data[1] = 0x80; // Enables basic interrupts
+        HAL_I2C_Master_Transmit(&hi2c1, LSM6DSO_ADDR, data, 2, 100);
+        HAL_Delay(50);
+
+        // Set wake-up threshold to 31.25 mg
+        data[0] = 0x5B; data[1] = 0x02;
+        HAL_I2C_Master_Transmit(&hi2c1, LSM6DSO_ADDR, data, 2, 100);
+        HAL_Delay(50);
+
+        // Enable slope filter and interrupts
+        data[0] = 0x56; data[1] = 0x30; // HPF applied &  sleep status reported on INT pins
+        HAL_I2C_Master_Transmit(&hi2c1, LSM6DSO_ADDR, data, 2, 100);
+        HAL_Delay(50);
 
 
 
+/*
         // registers for INT trigger wake up
 
         data[0] = 0x15; data[1] = 0x00; // CTRL6_C: XL_HM_MODE = 0
@@ -232,10 +252,6 @@ int main(void)
         HAL_I2C_Master_Transmit(&hi2c1, LSM6DSO_ADDR, data, 2, 100);
         HAL_Delay(50);
 
-        // Enable slope filter and interrupts
-        data[0] = 0x56; data[1] = 0x00; // TAP_CFG0: SLOPE_FDS = 1
-        HAL_I2C_Master_Transmit(&hi2c1, LSM6DSO_ADDR, data, 2, 100);
-        HAL_Delay(50);
 
         // Route wake-up to INT1
         data[0] = 0x5E; data[1] = 0x20; // MD1_CFG: INT1_WU = 1
@@ -248,8 +264,8 @@ int main(void)
         HAL_Delay(50);
 
 
-/*
-        // Verify all registers
+
+        // Verify all registers; for debugging, to check if registers hold correct value
         uint8_t vald;
         HAL_I2C_Mem_Read(&hi2c1, LSM6DSO_ADDR, 0x0F, 1, &vald, 1, 100); printf("WHO_AM_I: 0x%02X\n", vald); // 0x6C
         HAL_I2C_Mem_Read(&hi2c1, LSM6DSO_ADDR, 0x10, 1, &vald, 1, 100); printf("CTRL1_XL: 0x%02X\n", vald);  // 0x040
@@ -412,14 +428,27 @@ int main(void)
 
 
 
-	  uint8_t wake_up_src, accel_data[6];
+	  uint8_t wake_up_src_0, wake_up_src, accel_data[6];
 	  // Read all axes
 	  HAL_I2C_Mem_Read(&hi2c1, LSM6DSO_ADDR, 0x28, 1, accel_data, 6, 100); // OUTX_L_XL to OUTZ_H_XL
 	  int16_t accel_x = (int16_t)(accel_data[1] << 8 | accel_data[0]);
 	  int16_t accel_y = (int16_t)(accel_data[3] << 8 | accel_data[2]);
 	  int16_t accel_z = (int16_t)(accel_data[5] << 8 | accel_data[4]);
 	  HAL_I2C_Mem_Read(&hi2c1, LSM6DSO_ADDR, 0x1B, 1, &wake_up_src, 1, 100);
+	  // when 0x
+	  // reading 0xe -> 0000 1110 -> X, Y was detected and WU_IA detected and in 0x1A reg got 0x02
+	  // if wu_ia = 1 -> wake-up interrupt is active—motion exceeded the threshold.
+	  // wake-up was triggered by significant motion on the X and Y axes, but not Z.
+	  // SLEEP_STATE = 0: The device is in active mode (it woke up from sleep).
+	  // This is expected behavior for the wake-up function—it monitors acceleration against a threshold
+	  // (set in WAKE_UP_THS) and wakes the device when exceeded
+
+
+	  HAL_I2C_Mem_Read(&hi2c1, LSM6DSO_ADDR, 0x1A, 1, &wake_up_src_0, 1, 100); // Source register for all interrupts
 	  uint8_t int1_state = HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_8);
+	  // 0x1A reg got 0x02 -> WU_IA - wake up event status
+	  // Wake-up interrupt active (WU_IA = 1), no other interrupts (free-fall, taps, 6D, etc.).
+	  // this means wake up event was triggered and should be routed to INT1 if correctly routed
 
 	  printf("WAKE_UP_SRC: 0x%02X, X: %d, Y: %d, Z: %d, INT1: %d\n", wake_up_src, accel_x, accel_y, accel_z, int1_state);
 	    if (wake_up_src & 0x08) {
@@ -464,7 +493,7 @@ int main(void)
 	    // Send out buffer (temperature or error message)
 	    //HAL_UART_Transmit(&huart1, buf, strlen((char*)buf), TIMEOUT);
 */
-
+/*
 	    brightness = 10;
 
 	    if (val >= 16000 || val <= -16000){
@@ -488,6 +517,28 @@ int main(void)
 	    	green = 255;
 	    	setLEDStrip();
 	    }
+*/
+
+	  brightness = 10;
+
+	  if (int1_state){
+	  	   //red = 255;
+	  	   //blue = 255;
+	  	   //green = 255;
+	  	   //setLEDStrip();
+	  	   //HAL_Delay(500);
+	  	   red = 0;
+	  	   blue = 0;
+	  	   green = 0;
+	  	   setLEDStrip();
+	  } else {
+		  red = 0;
+		  blue = 0;
+		  green = 0;
+		  setLEDStrip();
+	  }
+
+
 
 
 	    HAL_Delay(100);
@@ -497,7 +548,7 @@ int main(void)
 	    //{
 	    //enter_sleep(); // Go back to sleep after work is done
 	    //}
-	    //sleep_flag = 1; // go back to sleep in next loop start
+	    sleep_flag = 1; // go back to sleep in next loop start
 
     /* USER CODE END WHILE */
 
