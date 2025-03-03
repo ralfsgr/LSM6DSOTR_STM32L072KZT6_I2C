@@ -36,6 +36,10 @@
 
 
 #define LED_COUNT 19  // Change as needed
+
+
+
+
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -74,6 +78,8 @@ static const uint8_t LSM6DSO_REG_OUTZ_H_XL = 0x2D;  // Z-axis acceleration data 
 
 volatile int woke_up = 0; // Flag to track wake-up
 volatile int sleep_flag = 1; // Start with Sleep mode enabled
+
+
 
 
 
@@ -204,8 +210,23 @@ int main(void)
         //if (ret != HAL_OK) printf("Reset failed\n");
         //HAL_Delay(200);
 
+
+        // code for ULP mode selection
         // Enable accelerometer, high-performance
-        data[0] = 0x10; data[1] = 0x40; // CTRL1_XL: 104 Hz, ±2g
+        //data[0] = 0x10; data[1] = 0x00; // CTRL1_XL: sensor off
+        //HAL_I2C_Master_Transmit(&hi2c1, LSM6DSO_ADDR, data, 2, 100);
+        //HAL_Delay(50);
+        // XL_HM_MODE high-performance operating mode disabled
+        data[0] = 0x15; data[1] = 0x10; // HL_HM_MODE: 1 - to disable high-erformance mode; 0 - enable high performance mode;
+        HAL_I2C_Master_Transmit(&hi2c1, LSM6DSO_ADDR, data, 2, 100);
+        HAL_Delay(50);
+        //data[0] = 0x14; data[1] = 0x80; // ULP_MODE - 0x80 enabled; 0x00 - disabled
+        //HAL_I2C_Master_Transmit(&hi2c1, LSM6DSO_ADDR, data, 2, 100);
+        //HAL_Delay(50);
+
+
+        // Enable accelerometer, high-performance
+        data[0] = 0x10; data[1] = 0x10; // CTRL1_XL: 12.5 Hz, ±2g
         HAL_I2C_Master_Transmit(&hi2c1, LSM6DSO_ADDR, data, 2, 100);
         HAL_Delay(50);
 
@@ -367,16 +388,10 @@ int main(void)
 
 
 
-
-
 	  // The MCU knows PA0 is the wake-up trigger because:
 	  // MX_GPIO_Init configures PA0 as an EXTI input on Line 0.
 	  // The EXTI0 interrupt is enabled and mapped to PA0 in hardware.
 	  // HAL_GPIO_EXTI_Callback confirms PA0 triggered it with GPIO_PIN_0.
-
-
-
-
 
 
 	  //Use a flag to decide when to sleep, so the MCU only enters Sleep mode when you explicitly want it to. For example:
@@ -390,10 +405,8 @@ int main(void)
 	        //HAL_Delay(50);
 
 	       HAL_SuspendTick();
-
 	       //HAL_PWR_EnterSLEEPMode(PWR_MAINREGULATOR_ON, PWR_SLEEPENTRY_WFI);
 	       HAL_PWR_EnterSTOPMode(PWR_LOWPOWERREGULATOR_ON, PWR_STOPENTRY_WFI);
-
 
 	   	   //After waking up, resume SysTick, continues where it left off, after wake up and trigger EXTU_callback executes;
 	       HAL_ResumeTick();
